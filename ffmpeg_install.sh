@@ -26,9 +26,9 @@ Download_FFMPEG(){
     tar -xvf ${fileName}.tar.xz
     rm -rf ${fileName}.tar.xz
     mv ${fileName} ${installPath}/ffmpeg
+    chmod a+x ${installPath}/ffmpeg/*
     ln -s ${installPath}/ffmpeg/ffmpeg /usr/local/bin/ffmpeg
     ln -s ${installPath}/ffmpeg/ffprobe /usr/local/bin/ffprobe
-    chmod a+x /etc/ffmpeg/*
 }
 
 Main(){
