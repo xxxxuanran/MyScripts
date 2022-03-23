@@ -19,7 +19,6 @@ Check_Arch(){
 }
 
 Download_FFMPEG(){
-    ln -sf bash /bin/sh
     echo -e "This server's architecture is ${arch}\n"
     fileName="ffmpeg-4.4.1-${arch}-static"
     cd /tmp
