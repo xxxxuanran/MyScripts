@@ -2,7 +2,7 @@
 PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
 export PATH
 LANG=en_US.UTF-8
-installPath=/usr/local/
+installPath=/opt
 arch=$(uname -m)
 
 Check_Arch(){
@@ -25,9 +25,9 @@ Download_FFMPEG(){
     wget -O ${fileName}.tar.xz https://www.johnvansickle.com/ffmpeg/old-releases/${fileName}.tar.xz
     tar -xvf ${fileName}.tar.xz
     rm -rf ${fileName}.tar.xz
-    mv ${fileName} /etc/ffmpeg
-    ln -s /etc/ffmpeg/ffmpeg /usr/local/bin/ffmpeg
-    ln -s /etc/ffmpeg/ffprobe /usr/local/bin/ffprobe
+    mv ${fileName} ${installPath}/ffmpeg
+    ln -s ${installPath}/ffmpeg/ffmpeg /usr/local/bin/ffmpeg
+    ln -s ${installPath}/ffmpeg/ffprobe /usr/local/bin/ffprobe
     chmod a+x /etc/ffmpeg/*
 }
 
