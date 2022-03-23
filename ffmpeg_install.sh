@@ -2,7 +2,7 @@
 PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
 export PATH
 LANG=en_US.UTF-8
-installPath=/opt
+installPath=/usr/local
 arch=$(uname -m)
 
 Check_Arch(){
