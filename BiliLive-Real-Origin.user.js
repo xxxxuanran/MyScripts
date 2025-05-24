@@ -1,113 +1,125 @@
 // ==UserScript==
 // @name         BiliLive真原画
-// @version      2025.05.15
+// @version      2025.05.24
 // @author       AsakiSama
 // @match        https://live.bilibili.com/*
-// @run-at       document-body
+// @run-at       document-start
 // @grant        unsafeWindow
 // @description
 // ==/UserScript==
 
-// Create cache storage
 const streamNameCache = new Map();
+const cdnHostMap = {
+    Bili: 'd0--cn-gotcha01.bilivideo.com',
+    Tencent: 'd1--cn-gotcha204.bilivideo.com',
+    Baidu: 'd1--cn-gotcha207.bilivideo.com',
+    Huawei: 'd1--cn-gotcha208.bilivideo.com',
+    Aliyun: 'd1--cn-gotcha209.bilivideo.com',
+}
+const cdnHostPattern = {
+    Any: /([a-z0-9\-]+\.bilivideo\.com)/,
+    Bili: /cn(-[a-z]+){2}(-\d+){2}/,
+    Tencent: /gotcha204(b|-[1234])?\./,
+    Baidu: /gotcha207b?\./,
+    Huawei: /gotcha208b?\./,
+    Aliyun: /gotcha209b?\./,
+}
 
-const playUrlPattern = /\/live-bvc\/(\d+)\/(live_[^\/\.]+)/;
-const CN01Host = 'cn-gddg-cm-01-22.bilivideo.com';
-const biliVideoPattern = /([a-z0-9\-]+\.bilivideo\.com)/;
-const hlsPattern = /\.(m4s|m3u8)/;
-const suffixPattern = /suffix=([^&]+)/;
+function getOriginStreamName(url) {
+    const streamNamePattern = /\/live-bvc\/\d+\/(live_[^./]+)/;
+    const suffixPattern = /suffix=([^&]+)/;
+    const suffix = suffixPattern.exec(url)?.[1];
+    let streamName = streamNamePattern.exec(url)?.[1];
+    if (streamName) {
+        if (suffix && suffix !== 'origin') {
+            streamName = streamName.replace(`_${suffix}`, '');
+        }
+        return streamName;
+    }
+    return null;
+}
+
+function getRoomId() {
+    return /live\.bilibili\.com\/(?:blanc\/)?(\d+)/.exec(location.href)?.[1];
+}
+
+function buildStreamUrl(host, streamName, requestFile) {
+    let path = '';
+    if (cdnHostPattern.Bili.test(host)) {
+        path = `/live-bvc/${streamName}/${requestFile}`;
+    } else {
+        path = `/live-bvc/000000/${streamName}/${requestFile}`;
+    }
+    return `https://${host}${path}`;
+}
+
+function getRequestFile(url) {
+    const urlParts = url.split('/');
+    return urlParts[urlParts.length - 1].split('?')[0];
+}
+
+const hlsPattern = /\.(?:m4s|m3u8)/;
 
 if (location.href.startsWith('https://live.bilibili.com/')) {
     const oldFetch = unsafeWindow.fetch;
     unsafeWindow.fetch = async function (url) {
         try {
             // 检查 url 类型并标准化
-            const urlString = typeof url === 'string' ? url : url.toString();
+            const urlString = typeof url === 'string' ? url : String(url);
 
             const isGetRoomPlayInfo = urlString.includes('/xlive/web-room/v2/index/getRoomPlayInfo');
             if (isGetRoomPlayInfo) {
+                // 不请求 HLS-TS
                 arguments[0] = urlString.replace(`&protocol=0,1`, '&protocol=0,1').replace('&format=0,1,2', '&format=0,2')
+                return oldFetch.apply(this, arguments);
             }
-
-            // 首先检查是否是 bilivideo.com 的请求
-            const biliVideoMatch = urlString.match(biliVideoPattern);
-            if (!biliVideoMatch) return oldFetch.apply(this, arguments);
-            // 不修改 HLS-TS
-            if (/gotcha10\d/.test(urlString)) return oldFetch.apply(this, arguments);
-
-            // 检查是否匹配 playUrl 模式
-            const playUrlMatch = urlString.match(playUrlPattern);
-            if (!playUrlMatch) return oldFetch.apply(this, arguments);
 
             // 检查是否是 .m4s 或 .m3u8 文件
             if (!hlsPattern.test(urlString)) return oldFetch.apply(this, arguments);
 
-            const roomId = location.href.match(/(\d+)/)[1];
-            const isM3U8 = /\.m3u8/.test(urlString);
+            const roomId = getRoomId();
+            if (!roomId) return oldFetch.apply(this, arguments);
 
-            // get from cache
-            if ( isM3U8 && streamNameCache.has(roomId) ) {
-                let m3u8Url = `https://${CN01Host}/live-bvc/${streamNameCache.get(roomId)}/index.m3u8`
-                arguments[0] = m3u8Url;
-                return oldFetch.apply(this, arguments);
+            // 获取 cdnHost
+            const cdnHostMatch = cdnHostPattern.Any.exec(urlString);
+            if (!cdnHostMatch) return oldFetch.apply(this, arguments);
+            let cdnHost = cdnHostMatch[1]
+                .replace('ov-gotcha20', 'cn-gotcha20')
+                .replaceAll(/(?:c1|c0|d0|d1)--cn-gotcha20(\d)b?/g, 'd1--cn-gotcha20$1');
+
+            // 更新内置 CN01 节点
+            if ( cdnHostPattern.Bili.test(cdnHost) ) cdnHostMap.Bili = cdnHost;
+
+            // Aliyun 大概是转推，延迟多约 2s；Tencent 即便不跨省，晚高峰卡顿严重
+            if (cdnHostPattern.Aliyun.test(cdnHost) || cdnHostPattern.Tencent.test(cdnHost)) {
+                cdnHost = Math.random() > 0.5 ? cdnHostMap.Baidu : cdnHostMap.Huawei;
             }
 
-            // host
-            let urlHost = biliVideoMatch[1];
-
-            // OV2CN
-            const isOverSea = /ov-gotcha20\d/.test(urlHost);
-            if ( isOverSea ) {
-                urlHost = urlHost.replace('ov-gotcha20', 'cn-gotcha20');
+            // 获取 streamName 并缓存
+            const originStreamName = getOriginStreamName(urlString);
+            if (!originStreamName) return oldFetch.apply(this, arguments);
+            if ( !streamNameCache.has(roomId) ) {
+                streamNameCache.set(roomId, originStreamName)
             }
 
-            // c1/c0/d0 to d1, backup to main
-            const isMainNode = /d1--cn-gotcha20\d\./.test(urlHost);
-            if ( !isMainNode ) {
-                urlHost = urlHost.replace(/(?:c1|c0|d0|d1)--cn-gotcha20(\d)b?/g, 'd1--cn-gotcha20$1');
-            }
+            const requestFile = getRequestFile(urlString);
 
-            const [, requestId, streamName] = playUrlMatch;
-            const requestFile = urlString.split(streamName)[1].split('?')[0].split('/')[1];
-
-            const isHeader = /h\d+\.m4s/.test(requestFile);
-            const isCN01 = /cn(\-[a-z]+){2}(\-\d+){2}/.test(urlHost);
-            const isTencent = /gotcha204(b|-[1234])?\./.test(urlHost);
-            const isBaidu = /gotcha207b?\./.test(urlHost);
-            const isHuawei = /gotcha208b?\./.test(urlHost);
-            const isAliyun = /gotcha209b?\./.test(urlHost);
-            const CNBaiduHost = 'd1--cn-gotcha207.bilivideo.com'
-
-            // m4s 直接从缓存取 stream_name
-            const canSkip = !isM3U8 && streamNameCache.has(roomId);
-            if ( canSkip ) {
-                arguments[0] = `https://${isHeader ? CN01Host : urlHost}/live-bvc/000000/${streamNameCache.get(roomId)}/${requestFile}`
+            // 替换请求
+            if (streamNameCache.has(roomId)) {
+                const host = /^\D/.test(requestFile) ? cdnHostMap.Bili : cdnHost;
+                arguments[0] = buildStreamUrl(host, streamNameCache.get(roomId), requestFile)
                 const promise = oldFetch.apply(this, arguments);
                 return promise.then(async response => {
                     const clonedResponse = response.clone();
                     if ([404].includes(clonedResponse.status)) {
                         // 替换 404 请求到 CN01
-                        const retryUrl = `https://${CN01Host}/live-bvc/000000/${streamNameCache.get(roomId)}/${requestFile}`
+                        const retryUrl = buildStreamUrl(cdnHostMap.Bili, streamNameCache.get(roomId), requestFile);
                         return await oldFetch(retryUrl);
                     }
                     return clonedResponse;
                 });
             }
 
-            // 获取二压后缀名
-            const suffixMatch = urlString.match(suffixPattern);
-            const suffix = suffixMatch ? suffixMatch[1] : null;
-            let originStreamName = streamName
-            if ( suffix && suffix !== 'origin' ) {
-                originStreamName = originStreamName.replace(`_${suffix}`, '');
-            }
-            if ( !streamNameCache.has(roomId) ) {
-                streamNameCache.set(roomId, originStreamName)
-            }
-
-            let newUrl = `https://${CN01Host}/live-bvc/000000/${streamNameCache.get(roomId)}/${requestFile}`
-
-            arguments[0] = newUrl;
             return oldFetch.apply(this, arguments);
         } catch (e) {
             console.log("原画=========", e)
