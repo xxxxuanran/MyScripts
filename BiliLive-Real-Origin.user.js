@@ -26,10 +26,8 @@ const cdnHostPattern = {
 }
 
 function getOriginStreamName(url) {
-    const streamNamePattern = /\/live-bvc\/\d+\/(live_[^./]+)/;
-    const suffixPattern = /suffix=([^&]+)/;
-    const suffix = suffixPattern.exec(url)?.[1];
-    let streamName = streamNamePattern.exec(url)?.[1];
+    const suffix = /suffix=([^&]+)/.exec(url)?.[1];
+    let streamName = /\/live-bvc\/\d+\/(live_[^./]+)/.exec(url)?.[1];
     if (streamName) {
         if (suffix && suffix !== 'origin') {
             streamName = streamName.replace(`_${suffix}`, '');
@@ -44,13 +42,10 @@ function getRoomId() {
 }
 
 function buildStreamUrl(host, streamName, requestFile) {
-    let path = '';
-    if (cdnHostPattern.Bili.test(host)) {
-        path = `/live-bvc/${streamName}/${requestFile}`;
-    } else {
-        path = `/live-bvc/000000/${streamName}/${requestFile}`;
-    }
-    return `https://${host}${path}`;
+    const path1 = cdnHostPattern.Bili.test(host) ?
+        'live-bvc' :
+        'live-bvc/000000';
+    return `https://${host}/${path1}/${streamName}/${requestFile}`;
 }
 
 function getRequestFile(url) {
