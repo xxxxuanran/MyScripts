@@ -1,21 +1,54 @@
 // ==UserScript==
 // @name         BiliLive真原画
-// @version      2025.05.24
+// @version      2025.05.25
 // @author       AsakiSama
 // @match        https://live.bilibili.com/*
 // @run-at       document-start
 // @grant        unsafeWindow
+// @grant        GM_setValue
+// @grant        GM_getValue
 // @description
 // ==/UserScript==
 
 const streamNameCache = new Map();
-const cdnHostMap = {
+
+// 默认 CDN 配置
+const defaultCdnHostMap = {
     Bili: 'd0--cn-gotcha01.bilivideo.com',
     Tencent: 'd1--cn-gotcha204.bilivideo.com',
     Baidu: 'd1--cn-gotcha207.bilivideo.com',
     Huawei: 'd1--cn-gotcha208.bilivideo.com',
     Aliyun: 'd1--cn-gotcha209.bilivideo.com',
 }
+
+// 从存储中加载 CDN 配置，如果没有则使用默认配置
+function loadCdnHostMap() {
+    try {
+        const stored = GM_getValue('cdnHostMap', null);
+        if (stored) {
+            const parsed = JSON.parse(stored);
+            // 合并默认配置和存储的配置，确保所有必要的键都存在
+            return { ...defaultCdnHostMap, ...parsed };
+        }
+    } catch (e) {
+        console.log('加载CDN配置失败:', e);
+    }
+    return { ...defaultCdnHostMap };
+}
+
+// 保存 CDN 配置到存储
+function saveCdnHostMap(cdnHostMap) {
+    try {
+        GM_setValue('cdnHostMap', JSON.stringify(cdnHostMap));
+        console.log('CDN配置已保存:', cdnHostMap);
+    } catch (e) {
+        console.log('保存CDN配置失败:', e);
+    }
+}
+
+// 初始化 CDN 配置
+let cdnHostMap = loadCdnHostMap();
+
 const cdnHostPattern = {
     Any: /([a-z0-9\-]+\.bilivideo\.com)/,
     Bili: /cn(-[a-z]+){2}(-\d+){2}/,
@@ -82,8 +115,12 @@ if (location.href.startsWith('https://live.bilibili.com/')) {
                 .replace('ov-gotcha20', 'cn-gotcha20')
                 .replaceAll(/(?:c1|c0|d0|d1)--cn-gotcha20(\d)b?/g, 'd1--cn-gotcha20$1');
 
-            // 更新内置 CN01 节点
-            if ( cdnHostPattern.Bili.test(cdnHost) ) cdnHostMap.Bili = cdnHost;
+            // 更新内置 CN01 节点并保存
+            if (cdnHostPattern.Bili.test(cdnHost) && cdnHostMap.Bili !== cdnHost) {
+                cdnHostMap.Bili = cdnHost;
+                saveCdnHostMap(cdnHostMap);
+                console.log('更新Bili节点:', cdnHost);
+            }
 
             // Aliyun 大概是转推，延迟多约 2s；Tencent 即便不跨省，晚高峰卡顿严重
             if (cdnHostPattern.Aliyun.test(cdnHost) || cdnHostPattern.Tencent.test(cdnHost)) {
@@ -93,7 +130,7 @@ if (location.href.startsWith('https://live.bilibili.com/')) {
             // 获取 streamName 并缓存
             const originStreamName = getOriginStreamName(urlString);
             if (!originStreamName) return oldFetch.apply(this, arguments);
-            if ( !streamNameCache.has(roomId) ) {
+            if (!streamNameCache.has(roomId)) {
                 streamNameCache.set(roomId, originStreamName)
             }
 
@@ -122,3 +159,31 @@ if (location.href.startsWith('https://live.bilibili.com/')) {
         }
     }
 }
+
+// 提供全局方法用于查看和重置CDN配置（可在控制台调用）
+unsafeWindow.BiliLiveCDN = {
+    // 查看当前CDN配置
+    getCdnConfig: () => {
+        console.log('当前CDN配置:', cdnHostMap);
+        return cdnHostMap;
+    },
+    // 重置CDN配置为默认值
+    resetCdnConfig: () => {
+        cdnHostMap = { ...defaultCdnHostMap };
+        saveCdnHostMap(cdnHostMap);
+        console.log('CDN配置已重置为默认值');
+        return cdnHostMap;
+    },
+    // 手动设置CDN节点
+    setCdnHost: (type, host) => {
+        if (cdnHostMap.hasOwnProperty(type)) {
+            cdnHostMap[type] = host;
+            saveCdnHostMap(cdnHostMap);
+            console.log(`${type}节点已更新为: ${host}`);
+            return true;
+        } else {
+            console.log('无效的CDN类型，支持的类型:', Object.keys(cdnHostMap));
+            return false;
+        }
+    }
+};
