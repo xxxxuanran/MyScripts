@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         BiliLive真原画
-// @version      2026.11.25.6
+// @version      2026.11.26
 // @author       AsakiSama
 // @match        https://live.bilibili.com/*
 // @match        https://www.bilibili.com/blackboard/live/*
@@ -156,7 +156,15 @@
             if (!file) continue;
             const status = entry.responseStatus ? ` HTTP ${entry.responseStatus}` : '';
             const cached = entry.deliveryType === 'cache' ? '（缓存）' : '';
-            console.log(`[BiliLive真原画] ${file} <- ${url.host} ${Math.round(entry.duration)}ms${status}${cached}`);
+            const duration = entry.duration;
+            const message = `[BiliLive真原画] ${file} <- ${url.host} ${Math.round(duration)}ms${status}${cached}`;
+            if (duration > 1500) {
+                console.error(message);
+            } else if (duration > 1000) {
+                console.warn(message);
+            } else {
+                console.log(message);
+            }
         }
     }
     const timingSetting = 'segmentTimingEnabled';
