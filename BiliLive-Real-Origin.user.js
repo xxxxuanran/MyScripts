@@ -106,16 +106,16 @@
             .replace(/[cd][01]--cn-gotcha([23]\d{2})(?!\d)b?/g, 'd1--cn-gotcha$1');
         const routeRoll = Math.random() * 100;
         // 按累计上界从小到大判断。腾讯上界从 0 改为 10 即占 10%。
-        if (routeRoll < 30) {
+        if (routeRoll < 50) {
             const suffixRoll = Math.random() * 100;
             let suffix;
-            if (suffixRoll < 20) {
+            if (suffixRoll < 0) {
                 suffix = '-1';
-            } else if (suffixRoll < 40) {
+            } else if (suffixRoll < 50) {
                 suffix = '-2';
-            } else if (suffixRoll < 60) {
+            } else if (suffixRoll < 50) {
                 suffix = '-3';
-            } else if (suffixRoll < 80) {
+            } else if (suffixRoll < 100) {
                 suffix = '-4';
             } else {
                 suffix = '';
@@ -123,21 +123,28 @@
             return CdnHost.Tencent.replace(/gotcha204(?:-\d+|b)?(?=\.bilivideo\.com$)/i, `gotcha204${suffix}`);
         } else if (routeRoll < 50) {
             return CdnHost.Baidu;
-        } else if (routeRoll < 70) {
+        } else if (routeRoll < 80) {
             return CdnHost.Huawei;
-        } else if (routeRoll < 90) {
+        } else if (routeRoll < 80) {
             return CdnHost.Aliyun;
-        } else if (routeRoll < 101) {
+        } else if (routeRoll < 100) {
             return cn01Host ?? CdnHost.Bili;
         }
         return host;
     }
 
     /** 固定 Bili 路线与百度分片使用请求 ID，查询参数从播放记录取值。 */
-    function buildStreamUrl(host, mediaPath, useFixedBili) {
-        const id = useFixedBili || /gotcha207b?\./i.test(host) ? requestId : '';
-        const url = `https://${host}/live-bvc/${id}/${mediaPath}`;
-        return stream.sk === null ? url : `${url}?sk=${encodeURIComponent(stream.sk)}`;
+    function buildStreamUrl(host, mediaPath, useFixedLine) {
+        const id = useFixedLine || /gotcha207b?\./i.test(host) ? requestId : '';
+        const url = new URL(`https://${host}/live-bvc/${id}/${mediaPath}`);
+
+        if (mediaPath.endsWith('.m3u8') && /gotcha204[^.]*\./i.test(host)) {
+            url.searchParams.set('dispatch_from', 'ztc9.9.9.9');
+        }
+        if (stream.sk !== null) {
+            url.searchParams.set('sk', stream.sk);
+        }
+        return url.href;
     }
 
     /** 按实际请求主机记录分片从发起到传输结束的耗时，包括重试的独立请求。 */
@@ -249,20 +256,20 @@
         const sk = url.searchParams.get('sk');
         if (sk && /^[0-9a-z]{32}$/.test(sk)) stream.sk = sk;
         const mediaPath = `${stream.streamName}/${file}`;
-        const useFixedBili = isPlaylist || /^h\d+\.m4s$/.test(file);
-        const host = useFixedBili ? CdnHost.Bili : chooseCdnHost(url.hostname);
+        const useFixedLine = isPlaylist || /^h\d+\.m4s$/.test(file);
+        const host = useFixedLine ? CdnHost.Bili : chooseCdnHost(url.hostname);
         // 继承调用方的 RequestInit，仅覆盖媒体请求的重定向模式。
         const mediaInit = Object.create(init ?? null, { redirect: { value: 'follow' } });
-        const response = await fetchAt(buildStreamUrl(host, mediaPath, useFixedBili), mediaInit);
+        const response = await fetchAt(buildStreamUrl(host, mediaPath, useFixedLine), mediaInit);
         // 可跟随的重定向已由 fetch 处理；原样返回 2xx 及没有下一跳的 3xx。
         if (response.status >= 200 && response.status < 400) return response;
 
         response.body?.cancel().catch(console.debug);
-        const retryHost = useFixedBili ? CdnHost.Bili : (cn01Host ?? CdnHost.Bili);
+        const retryHost = useFixedLine ? CdnHost.Bili : (cn01Host ?? CdnHost.Bili);
         if (!isPlaylist) {
             console.log(`[BiliLive真原画] ${file} <- ${host} HTTP ${response.status}，重试 ${retryHost}`);
         }
-        return fetchAt(buildStreamUrl(retryHost, mediaPath, useFixedBili), mediaInit);
+        return fetchAt(buildStreamUrl(retryHost, mediaPath, useFixedLine), mediaInit);
     };
 
     unsafeWindow.BiliLiveCDN = {
