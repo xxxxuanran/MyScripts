@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         BiliLive真原画
-// @version      2026.11.26
+// @version      2026.11.26.2
 // @author       AsakiSama
 // @match        https://live.bilibili.com/*
 // @match        https://www.bilibili.com/blackboard/live/*
@@ -106,7 +106,7 @@
             .replace(/[cd][01]--cn-gotcha([23]\d{2})(?!\d)b?/g, 'd1--cn-gotcha$1');
         const routeRoll = Math.random() * 100;
         // 按累计上界从小到大判断。腾讯上界从 0 改为 10 即占 10%。
-        if (routeRoll < 50) {
+        if (routeRoll < 35) {
             const suffixRoll = Math.random() * 100;
             let suffix;
             if (suffixRoll < 0) {
@@ -121,11 +121,11 @@
                 suffix = '';
             }
             return CdnHost.Tencent.replace(/gotcha204(?:-\d+|b)?(?=\.bilivideo\.com$)/i, `gotcha204${suffix}`);
-        } else if (routeRoll < 50) {
+        } else if (routeRoll < 65) {
             return CdnHost.Baidu;
-        } else if (routeRoll < 80) {
+        } else if (routeRoll < 90) {
             return CdnHost.Huawei;
-        } else if (routeRoll < 80) {
+        } else if (routeRoll < 90) {
             return CdnHost.Aliyun;
         } else if (routeRoll < 100) {
             return cn01Host ?? CdnHost.Bili;
@@ -135,36 +135,51 @@
 
     /** 固定 Bili 路线与百度分片使用请求 ID，查询参数从播放记录取值。 */
     function buildStreamUrl(host, mediaPath, useFixedLine) {
-        const id = useFixedLine || /gotcha207b?\./i.test(host) ? requestId : '';
+        const id = useFixedLine || /gotcha207b?\./i.test(host) || true ? requestId : '';
         const url = new URL(`https://${host}/live-bvc/${id}/${mediaPath}`);
 
-        if (mediaPath.endsWith('.m3u8') && /gotcha204[^.]*\./i.test(host)) {
-            url.searchParams.set('dispatch_from', 'ztc9.9.9.9');
-        }
+        // if (mediaPath.endsWith('.m3u8') && /gotcha204[^.]*\./i.test(host)) {
+        //     url.searchParams.set('dispatch_from', 'ztc9.9.9.9');
+        // }
         if (stream.sk !== null) {
             url.searchParams.set('sk', stream.sk);
         }
         return url.href;
     }
 
-    /** 按实际请求主机记录分片从发起到传输结束的耗时，包括重试的独立请求。 */
+    // 首发失败在决定重试时立即记录。Resource Timing 可能稍后才送达，甚至不公开状态码。
+    const reportedFailures = [];
+
+    /** 按分片耗时选择控制台日志级别。 */
+    function logSegmentDuration(message, duration) {
+        if (duration > 1500) {
+            console.error(message);
+        } else if (duration > 1000) {
+            console.warn(message);
+        } else {
+            console.log(message);
+        }
+    }
+
+    /** 按实际请求主机记录分片耗时，跳过已随重试提示记录的那一次失败。 */
     function logSegmentTimings(list) {
         for (const entry of list.getEntries()) {
             if (entry.initiatorType !== 'fetch' || !entry.name.includes('/live-bvc/')) continue;
             const url = new URL(entry.name);
             const file = /^\/live-bvc\/(?:000000)?\/live_[^/]+\/([^/]+\.m4s)$/i.exec(url.pathname)?.[1];
             if (!file) continue;
+            const failureIndex = reportedFailures.findIndex(failure =>
+                failure.url === entry.name && (!entry.responseStatus || failure.status === entry.responseStatus) &&
+                entry.startTime >= failure.start && entry.startTime <= failure.dispatched);
+            if (failureIndex !== -1) {
+                reportedFailures.splice(failureIndex, 1);
+                continue;
+            }
             const status = entry.responseStatus ? ` HTTP ${entry.responseStatus}` : '';
             const cached = entry.deliveryType === 'cache' ? '（缓存）' : '';
             const duration = entry.duration;
             const message = `[BiliLive真原画] ${file} <- ${url.host} ${Math.round(duration)}ms${status}${cached}`;
-            if (duration > 1500) {
-                console.error(message);
-            } else if (duration > 1000) {
-                console.warn(message);
-            } else {
-                console.log(message);
-            }
+            logSegmentDuration(message, duration);
         }
     }
     const timingSetting = 'segmentTimingEnabled';
@@ -179,6 +194,7 @@
         } else if (!enabled && timingObserver) {
             timingObserver.disconnect();
             timingObserver = null;
+            reportedFailures.length = 0;
         }
         const label = enabled ? '关闭分片耗时统计' : '开启分片耗时统计';
         timingMenuId = GM_registerMenuCommand(label, () => GM_setValue(timingSetting, !enabled), { id: timingMenuId });
@@ -268,29 +284,44 @@
         const host = useFixedLine ? CdnHost.Bili : chooseCdnHost(url.hostname);
         // 继承调用方的 RequestInit，仅覆盖媒体请求的重定向模式。
         const mediaInit = Object.create(init ?? null, { redirect: { value: 'follow' } });
-        const response = await fetchAt(buildStreamUrl(host, mediaPath, useFixedLine), mediaInit);
+        const firstUrl = buildStreamUrl(host, mediaPath, useFixedLine);
+        const observer = isPlaylist ? null : timingObserver;
+        const start = observer ? performance.now() : 0;
+        const pendingResponse = fetchAt(firstUrl, mediaInit);
+        const dispatched = observer ? performance.now() : 0;
+        const response = await pendingResponse;
         // 可跟随的重定向已由 fetch 处理；原样返回 2xx 及没有下一跳的 3xx。
         if (response.status >= 200 && response.status < 400) return response;
 
         response.body?.cancel().catch(console.debug);
         const retryHost = useFixedLine ? CdnHost.Bili : (cn01Host ?? CdnHost.Bili);
         if (!isPlaylist) {
-            console.log(`[BiliLive真原画] ${file} <- ${host} HTTP ${response.status}，重试 ${retryHost}`);
+            const failure = `HTTP ${response.status}，重试 ${retryHost}`;
+            const prefix = `[BiliLive真原画] ${file} <- ${host}`;
+            if (observer && observer === timingObserver) {
+                const duration = performance.now() - start;
+                // 部分取消的请求没有计时条目，限制待匹配记录的数量。
+                if (reportedFailures.length >= 128) reportedFailures.shift();
+                reportedFailures.push({ url: firstUrl, status: response.status, start, dispatched });
+                logSegmentDuration(`${prefix} ${Math.round(duration)}ms ${failure}`, duration);
+            } else {
+                console.log(`${prefix} ${failure}`);
+            }
         }
         return fetchAt(buildStreamUrl(retryHost, mediaPath, useFixedLine), mediaInit);
     };
 
     unsafeWindow.BiliLiveCDN = {
         /** 返回当前节点配置的副本，Bili 字段为当前 CN01 主机。 */
-        getCdnConfig: () => ({ ...CdnHost, Bili: cn01Host ?? CdnHost.Bili }),
+        getCdn: () => ({ ...CdnHost, Bili: cn01Host ?? CdnHost.Bili }),
         /** 将自定义或学习到的 CN01 主机重置为内置默认值。 */
-        resetCdnConfig() {
+        resetCdn() {
             setCn01Host(null);
             return { ...CdnHost };
         },
         /** 手动设置并保存 CN01 主机，返回是否接受该设置。 */
-        setCdnHost(type, host) {
-            if (type !== 'Bili' || !validHost(host)) return false;
+        setCdn(host) {
+            if (!validHost(host)) return false;
             setCn01Host(host);
             return true;
         },
